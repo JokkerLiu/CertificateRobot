@@ -29,6 +29,7 @@ namespace CertificateRobot.Service
             Console.WriteLine("开始执行工作流程...");
 
             // 获取当前运行主机操作系统
+            Console.WriteLine("==> 运行环境检测，目前只支持Windows和Linux");
             string osType = string.Empty;
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
@@ -48,10 +49,12 @@ namespace CertificateRobot.Service
             switch (osType)
             {
                 case "Linux":
+                    Console.WriteLine($"==> 获取{_configuration["CertificatesPathInLinux"]}下所有crt证书文件");
                     certificateInformations = _systemService.FirstOrDefault(x => x.GetType() == typeof(LinuxSystemService)).GetAllCertificateInformation();
                     break;
 
                 case "Windows":
+                    Console.WriteLine($"==> 获取IIS下所有crt证书文件");
                     certificateInformations = _systemService.FirstOrDefault(x => x.GetType() == typeof(WindowsSystemService)).GetAllCertificateInformation();
                     break;
 
@@ -68,21 +71,25 @@ namespace CertificateRobot.Service
 
             foreach (CertificateInformation certificateInformation in certificateInformations)
             {
+                Console.WriteLine($"==> 检查证书是否即将过期");
                 // 证书即将过期，且在值守列表中
                 if (certificateInformation.NotAfter < DateTime.Now.AddDays(advanceDate) && domains.Select(x => x.Domian).Contains(certificateInformation.Subject))
                 {
                     if (_configuration["WeChatWork:Enable"].ToLower() == "true")
                     {
+                        Console.WriteLine($"==> 发送企业微信提醒");
                         // 发送企业微信提醒
                         await _messageService.FirstOrDefault(x => x.GetType() == typeof(WeChatWorkService)).SendMessage($"{certificateInformation.Subject}证书即将过期，即将去往{domains.FirstOrDefault(x => x.Domian == certificateInformation.Subject).DomainProvider}自动申请");
                     }
                     if (_configuration["Smtp:Enable"].ToLower() == "true")
                     {
+                        Console.WriteLine($"==> 发送邮件提醒");
                         // 发送邮件提醒
                         await _messageService.FirstOrDefault(x => x.GetType() == typeof(MailService)).SendMessage($"{certificateInformation.Subject}证书即将过期，即将去往{domains.FirstOrDefault(x => x.Domian == certificateInformation.Subject).DomainProvider}自动申请");
                     }
 
                     // 判断证书是否已经申请
+                    Console.WriteLine($"==> 检查证书申请状态");
                     (string, bool) certId_exist = await _certificateService.CheckCertificateHasApplyAsync(certificateInformation.Subject, advanceDate);
 
                     string certId = certId_exist.Item1;
@@ -91,6 +98,7 @@ namespace CertificateRobot.Service
                     if (string.IsNullOrEmpty(certId) && certId_exist.Item2 == false)
                     {
                         // 申请新证书
+                        Console.WriteLine($"==> 未申请过证书，申请新证书");
                         certId = await _certificateService.CertificateApplyAsync(certificateInformation.Subject);
                     }
 
@@ -98,6 +106,7 @@ namespace CertificateRobot.Service
                     if (certId_exist.Item2 == false)
                     {
                         // 获取证书详情
+                        Console.WriteLine($"==> 已申请过证书，获取证书验证信息");
                         (string, string, string, int, bool) certDetail = await _certificateService.CertificateDetail(certId);
 
                         // 验证中的证书跳过DNS解析及证书验证
@@ -107,11 +116,13 @@ namespace CertificateRobot.Service
                             switch (domains.FirstOrDefault(x => x.Domian == certificateInformation.Subject).DomainProvider)
                             {
                                 case "Tencent":
+                                    Console.WriteLine($"==> 增加腾讯云解析");
                                     // 腾讯云解析
                                     await _domainService.FirstOrDefault(x => x.GetType() == typeof(TencentDomainService)).AddDomainRecord(domain: certDetail.Item1, subDomain: certDetail.Item2, value: certDetail.Item3);
                                     break;
 
                                 case "Alibaba":
+                                    Console.WriteLine($"==> 增加阿里云解析");
                                     // 阿里云解析
                                     await _domainService.FirstOrDefault(x => x.GetType() == typeof(AlibabaDomainService)).AddDomainRecord(domain: certDetail.Item1, subDomain: certDetail.Item2, value: certDetail.Item3);
                                     break;
@@ -121,15 +132,20 @@ namespace CertificateRobot.Service
                             }
 
                             // 证书验证
+                            Console.WriteLine($"==> 证书验证");
                             await _certificateService.CertificateVerify(certId, certDetail.Item4);
                         }
                     }
 
                     // 证书下载
+                    Console.WriteLine($"==> 证书下载");
                     await _certificateService.CertificateDownLoad(certId);
 
                     // 解压缩证书zip
+                    Console.WriteLine($"==> 证书解压缩");
                     Utils.UnZip(outPath: certificateInformation.Subject.Replace("*", "_"));
+
+                    Console.WriteLine("执行工作流程结束...");
 
                     //// 安装证书
                     //(string, byte[]) installed;
